@@ -210,7 +210,6 @@
         (let* ((b (car bindings))
                (lam (make-lambda (list (let-variable b))
                                  (list (rec (cdr bindings) body)))))
-          (pretty-print lam)
           (append (list lam) (list (let-value b))))))
   (rec (let-bindings exp) (let-body exp)))
 
