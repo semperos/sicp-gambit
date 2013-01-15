@@ -6,6 +6,7 @@
         ((quoted? exp) (text-of-quotation exp))
         ((assignment? exp) (eval-assignment exp env))
         ((definition? exp) (eval-definition exp env))
+        ((make-unbound? exp) (eval-make-unbound! exp env))
         ((if? exp) (eval-if exp env))
         ((and? exp) (eval-and (cdr exp) env))
         ((or? exp) (eval-or (cdr exp) env))
@@ -80,6 +81,10 @@
     env)
   'ok)
 
+(define (eval-make-unbound! exp env)
+  (make-unbound! (cadr exp) env)
+  'ok)
+
 ;; Expressions
 
 (define (self-evaluating? exp)
@@ -117,6 +122,9 @@
       (caddr exp)
       (make-lambda (cdadr exp)
                    (cddr exp))))
+
+(define (make-unbound? exp)
+  (tagged-list? exp 'make-unbound!))
 
 (define (lambda? exp) (tagged-list? exp 'lambda))
 (define (lambda-parameters exp)
@@ -279,6 +287,8 @@
           (error "Too many arguments supplied" vars vals)
           (error "Too few arguments supplied" vars vals))))
 
+;; Variables
+
 ;; Recursively search a given environment for a variable's
 ;; bound value. Start at the innermost scope (first frame)
 ;; and proceed, throwing an error if no value is found.
@@ -287,6 +297,8 @@
     (define (scan bindings)
       (cond ((null? bindings)
              (env-loop (enclosing-environment env)))
+            ((null? (car bindings))
+             (scan (cdr bindings)))
             ((eq? var (caar bindings))
              (cadar bindings))
             (else (scan (cdr bindings)))))
@@ -322,6 +334,19 @@
              (set-car! bindings (list (caar bindings) val)))
             (else (scan (cdr bindings)))))
     (scan frame)))
+
+;; Un-bind an existing variable, only in current frame
+(define (make-unbound! var env)
+  (define (scan bindings)
+    (cond ((null? bindings)
+           (error "No such variable to undefine." var))
+          ((eq? var (caar bindings))
+           (set-car! bindings '()))
+          (else (scan (cdr bindings)))))
+  (let ((frame (first-frame env)))
+    (if (null? frame)
+        (error "Nothing to undefine, frame is empty")
+        (scan frame))))
 
 ;; Primitive Functions/Procedures
 
