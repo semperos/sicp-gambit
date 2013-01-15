@@ -19,8 +19,9 @@
         ((let*? exp) (eval (let*->nested-lets exp) env))
         ((cond? exp) (eval (cond->if exp) env))
         ((application? exp)
-         (apply* (eval (operator exp) env)
-                (list-of-values (operands exp) env)))
+         (begin
+           (apply* (eval (operator exp) env)
+                   (list-of-values (operands exp) env))))
         (else
          (error "Unknown expression type -- EVAL" exp))))
 
@@ -228,18 +229,49 @@
 (define (procedure-body p) (caddr p))
 (define (procedure-environment p) (cadddr p))
 
+;; Environment, Bindings and Frames
+
+;; Lexical scope - get the scope next highest
 (define (enclosing-environment env) (cdr env))
+
+;; Get the inner-most scope
 (define (first-frame env) (car env))
+
+;; Define an empty environment to start things off
 (define the-empty-environment '())
 
+;; Make a new frame with bindings from a list
+;; of variables and values
 (define (make-frame variables values)
-  (cons variables values))
-(define (frame-variables frame) (car frame))
-(define (frame-values frame) (cdr frame))
-(define (add-binding-to-frame! var val frame)
-  (set-car! frame (cons var (car frame)))
-  (set-cdr! frame (cons val (cdr frame))))
+  (if (null? variables)
+      '()
+      (cons (list (car variables) (car values))
+            (make-frame (cdr variables) (cdr values)))))
 
+;; Extract just the variables from a single frame's bindings
+(define (frame-variables frame) (map car frame))
+
+;; Extract just the values from a single frame's bindings
+(define (frame-values frame) (map cadr frame))
+
+;; Copy a list
+;; TODO: this probably isn't the best way to handle
+;; add-binding-to-frame using an associative list,
+;; but I can't think else how to do it.
+(define (list-copy l)
+  (if (null? l)
+      '()
+      (cons (car l)
+            (list-copy (cdr l)))))
+
+;; Add a new binding to an existing frame (mutation)
+(define (add-binding-to-frame! var val frame)
+  (let ((old-frame (list-copy frame)))
+    (set-car! frame (list var val))
+    (set-cdr! frame old-frame)))
+
+;; Add a new frame to an existing environment.
+;; Adds to the front, so this is a more inner scope.
 (define (extend-environment vars vals base-env)
   (if (= (length vars) (length vals))
       (cons (make-frame vars vals) base-env)
@@ -247,46 +279,51 @@
           (error "Too many arguments supplied" vars vals)
           (error "Too few arguments supplied" vars vals))))
 
+;; Recursively search a given environment for a variable's
+;; bound value. Start at the innermost scope (first frame)
+;; and proceed, throwing an error if no value is found.
 (define (lookup-variable-value var env)
   (define (env-loop env)
-    (define (scan vars vals)
-      (cond ((null? vars)
+    (define (scan bindings)
+      (cond ((null? bindings)
              (env-loop (enclosing-environment env)))
-            ((eq? var (car vars))
-             (car vals))
-            (else (scan (cdr vars) (cdr vals)))))
+            ((eq? var (caar bindings))
+             (cadar bindings))
+            (else (scan (cdr bindings)))))
     (if (eq? env the-empty-environment)
         (error "Unbound variable" var)
-        (let ((frame (first-frame env)))
-          (scan (frame-variables frame)
-                (frame-values frame)))))
+        (scan (first-frame env))))
   (env-loop env))
 
+;; Give a variable a new value. Stops
+;; at the first matching var (innermost frame/scope)
 (define (set-variable-value! var val env)
   (define (env-loop env)
-    (define (scan vars vals)
-      (cond ((null? vars)
+    (define (scan bindings)
+      (cond ((null? bindings)
              (env-loop (enclosing-environment env)))
-            ((eq? var (car vars))
-             (set-car! vals val))
-            (else (scan (cdr vars) (cdr vals)))))
+            ((eq? var (caar bindings))
+             (set-car! bindings (list (caar bindings) val)))
+            (else (scan (cdr bindings)))))
     (if (eq? env the-empty-environment)
         (error "Unbound variable -- SET!" var)
-        (let ((frame (first-frame env)))
-          (scan (frame-variables frame)
-                (frame-values frame)))))
+        (scan (first-frame env))))
   (env-loop env))
 
+;; Add a new variable binding to the first frame
+;; (innermost scope). If the variable already
+;; exists in this frame, set it's value to val.
 (define (define-variable! var val env)
   (let ((frame (first-frame env)))
-    (define (scan vars vals)
-      (cond ((null? vars)
-             (add-binding-to-frame! var val frame))
-            ((eq? var (car vars))
-             (set-car! vals val))
-            (else (scan (cdr vars) (cdr vals)))))
-    (scan (frame-variables frame)
-          (frame-values frame))))
+    (define (scan bindings)
+      (cond ((null? bindings)
+             (add-binding-to-frame! var val frame)) ;; note frame, not bindings
+            ((eq? var (caar bindings))
+             (set-car! bindings (list (caar bindings) val)))
+            (else (scan (cdr bindings)))))
+    (scan frame)))
+
+;; Primitive Functions/Procedures
 
 (define primitive-procedures
   (list (list 'car car)
